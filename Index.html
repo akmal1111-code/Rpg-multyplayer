@@ -1,0 +1,211 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>🔥 Turn-Based RPG Multiplayer</title>
+  <link href="https://fonts.googleapis.com/css2?family=MedievalSharp&display=swap" rel="stylesheet">
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
+  <style>
+    body {
+      background: #2c1d0f;
+      color: #f0e6d2;
+      font-family: 'MedievalSharp', cursive;
+      text-align: center;
+      padding: 20px;
+    }
+    input, button, select {
+      padding: 10px;
+      margin: 5px;
+      font-size: 16px;
+      border-radius: 5px;
+      font-family: inherit;
+    }
+    button { background-color: #8b5e3c; color: white; border: none; }
+    #log, #status, #chat, #shop, #leaderboard {
+      background-color: rgba(0,0,0,0.3);
+      border: 1px solid #666;
+      padding: 10px;
+      margin: 10px auto;
+      width: 90%;
+      max-width: 600px;
+      border-radius: 8px;
+    }
+  </style>
+</head>
+<body>
+  <h2>⚔️ Turn-Based RPG - Firebase</h2>
+  <input id="name" placeholder="Nama Prajurit">
+  <button onclick="join()">Gabung</button>
+
+  <div id="game" style="display:none;">
+    <div id="status"></div>
+    <div><b>Koin:</b> <span id="coins">0</span> | <b>Class:</b> <span id="role">-</span></div>
+    <select id="target"></select><br>
+    <button onclick="act('serang')" id="attackBtn">⚔️ Serang</button>
+    <button onclick="act('bertahan')" id="defendBtn">🛡️ Bertahan</button>
+
+    <div id="chat">
+      <h3>💬 Chat</h3>
+      <div id="chatLog" style="max-height:150px; overflow-y:auto;"></div>
+      <input id="chatMsg" placeholder="Ketik pesan...">
+      <button onclick="sendChat()">Kirim</button>
+    </div>
+
+    <div id="shop">
+      <h3>🏪 Shop Role (100 koin)</h3>
+      <button onclick="buyRole('Warrior')">Warrior (+5)</button>
+      <button onclick="buyRole('Mage')">Mage (+10)</button>
+      <button onclick="buyRole('Rogue')">Rogue (+7)</button>
+    </div>
+
+    <div id="log"></div>
+    <div id="leaderboard">
+      <h3>🏆 Leaderboard</h3>
+      <div id="leaderList"></div>
+    </div>
+  </div>
+
+  <script>
+    const firebaseConfig = {
+    apiKey: "AIzaSyAv-wsEfxBSqc4N0JBGC5wDi-AuSHpcGR0",
+  authDomain: "rpg-game-96fbf.firebaseapp.com",
+  databaseURL: "https://rpg-game-96fbf-default-rtdb.firebaseio.com",
+  projectId: "rpg-game-96fbf",
+  storageBucket: "rpg-game-96fbf.firebasestorage.app",
+  messagingSenderId: "639280312678",
+  appId: "1:639280312678:web:735f7c280b34422651d8a7",
+  measurementId: "G-BQWQFCHRR4"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    let playerName = "";
+    let playerRef = null;
+    let actedThisTurn = false;
+    let myData = {};
+
+    function join() {
+      playerName = document.getElementById("name").value || "Anonim";
+      playerRef = db.ref("players/" + playerName);
+      playerRef.set({ hp: 100, action: "", target: "", defending: false, acted: false, coins: 0, role: "" });
+      playerRef.onDisconnect().remove();
+      document.getElementById("game").style.display = "block";
+      listen();
+    }
+
+    function act(action) {
+      if (actedThisTurn || myData.hp <= 0) return;
+      const target = document.getElementById("target").value;
+      if (action === 'serang' && target === playerName) return alert("Tidak bisa menyerang diri sendiri!");
+      playerRef.update({ action, target, acted: true });
+      actedThisTurn = true;
+      toggleButtons(false);
+    }
+
+    function toggleButtons(state) {
+      document.getElementById("attackBtn").disabled = !state;
+      document.getElementById("defendBtn").disabled = !state;
+      document.getElementById("target").disabled = !state;
+    }
+
+    function listen() {
+      db.ref("players").on("value", snapshot => {
+        const data = snapshot.val() || {};
+        myData = data[playerName] || {};
+
+        document.getElementById("coins").textContent = myData.coins || 0;
+        document.getElementById("role").textContent = myData.role || "-";
+
+        const alive = Object.entries(data).filter(([_, p]) => p.hp > 0);
+        const targetSelect = document.getElementById("target");
+        targetSelect.innerHTML = "";
+        alive.forEach(([name]) => {
+          const opt = document.createElement("option");
+          opt.value = name;
+          opt.textContent = name;
+          targetSelect.appendChild(opt);
+        });
+
+        document.getElementById("status").innerHTML = Object.entries(data).map(([name, p]) => `${name}: ${p.hp} HP`).join("<br>");
+
+        if (myData.hp <= 0) {
+          toggleButtons(false);
+          log("💀 Kamu mati. Spectator mode aktif.");
+        }
+
+        const allActed = alive.every(([_, p]) => p.acted);
+        if (allActed) processTurn(data);
+      });
+
+      db.ref("chat").on("child_added", snap => {
+        const msg = snap.val();
+        const el = document.createElement("div");
+        el.textContent = `${msg.name}: ${msg.text}`;
+        document.getElementById("chatLog").appendChild(el);
+      });
+
+      db.ref("leaderboard").on("value", snap => {
+        const lb = snap.val() || {};
+        const list = Object.entries(lb).map(([_, v]) => `${v.name} - ${v.time}`);
+        document.getElementById("leaderList").innerHTML = list.join("<br>");
+      });
+    }
+
+    function processTurn(players) {
+      const updates = {};
+      for (const [name, p] of Object.entries(players)) {
+        if (p.hp <= 0) continue;
+        if (p.action === 'serang' && players[p.target] && players[p.target].hp > 0) {
+          let base = 20;
+          const roleBonus = p.role === 'Warrior' ? 5 : p.role === 'Mage' ? 10 : p.role === 'Rogue' ? 7 : 0;
+          let damage = base + roleBonus;
+          if (players[p.target].defending) damage = Math.floor(damage / 2);
+          updates[`players/${p.target}/hp`] = Math.max(players[p.target].hp - damage, 0);
+          log(`${name} menyerang ${p.target} (${damage} dmg)`);
+        }
+        if (p.action === 'bertahan') updates[`players/${name}/defending`] = true;
+        updates[`players/${name}/acted`] = false;
+        updates[`players/${name}/action`] = "";
+        updates[`players/${name}/target`] = "";
+      }
+      for (const [name, p] of Object.entries(players)) {
+        if (!updates[`players/${name}/defending`]) updates[`players/${name}/defending`] = false;
+      }
+
+      db.ref().update(updates).then(() => {
+        const alive = Object.entries(players).filter(([_, p]) => p.hp > 0);
+        if (alive.length === 1) {
+          const winner = alive[0][0];
+          db.ref(`players/${winner}/coins`).transaction(c => (c || 0) + 20);
+          db.ref("leaderboard").push({ name: winner, time: new Date().toLocaleString() });
+          log(`🏆 ${winner} menang!`);
+        }
+        if (myData.hp > 0) {
+          actedThisTurn = false;
+          toggleButtons(true);
+        }
+      });
+    }
+
+    function log(msg) {
+      const el = document.createElement("div");
+      el.textContent = `> ${msg}`;
+      document.getElementById("log").appendChild(el);
+    }
+
+    function sendChat() {
+      const msg = document.getElementById("chatMsg").value;
+      if (!msg.trim()) return;
+      db.ref("chat").push({ name: playerName, text: msg });
+      document.getElementById("chatMsg").value = "";
+    }
+
+    function buyRole(role) {
+      if ((myData.coins || 0) < 100) return alert("Koin tidak cukup!");
+      playerRef.update({ coins: myData.coins - 100, role });
+      alert("Berhasil membeli role: " + role);
+    }
+  </script>
+</body>
+</html>
