@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>🔥 Medieval RPG Firebase</title>
+  <!-- Font bergaya fantasi -->
+  <link href="https://fonts.googleapis.com/css2?family=MedievalSharp&display=swap" rel="stylesheet">
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
+  <style>
+    body {
+      background: url('https://www.transparenttextures.com/patterns/wood-pattern.png'), #2c1d0f;
+      color: #f0e6d2;
+      font-family: 'MedievalSharp', cursive;
+      text-align: center;
+      padding: 20px;
+    }
+
+    h2 {
+      font-size: 36px;
+      color: #ffd700;
+      text-shadow: 2px 2px 5px black;
+    }
+
+    input, button {
+      padding: 12px 18px;
+      font-size: 18px;
+      margin: 10px;
+      border-radius: 6px;
+      border: none;
+      font-family: inherit;
+    }
+
+    input {
+      background-color: #f4ecd8;
+      color: #222;
+    }
+
+    button {
+      background-color: #8b5e3c;
+      color: white;
+      cursor: pointer;
+      box-shadow: 0 4px #5a3922;
+    }
+
+    button:hover {
+      background-color: #a36a42;
+    }
+
+    #game {
+      margin-top: 20px;
+    }
+
+    #status {
+      background-color: rgba(0,0,0,0.4);
+      border: 2px solid #d2b48c;
+      padding: 10px;
+      border-radius: 10px;
+    }
+
+    #log {
+      margin-top: 20px;
+      max-height: 200px;
+      overflow-y: auto;
+      background-color: rgba(0,0,0,0.3);
+      border: 1px solid #666;
+      padding: 10px;
+      border-radius: 8px;
+      font-size: 16px;
+    }
+
+    ::selection {
+      background: #ffd700;
+      color: #000;
+    }
+  </style>
+</head>
+<body>
+  <h2>⚔️ Medieval RPG - Firebase Realm</h2>
+
+  <input id="name" placeholder="Nama Prajurit">
+  <button onclick="join()">Masuk ke Dunia</button>
+
+  <div id="game" style="display:none;">
+    <p><strong>Status Pemain:</strong></p>
+    <div id="status"></div>
+    <br>
+    <button onclick="act('serang')">⚔️ Serang</button>
+    <button onclick="act('bertahan')">🛡️ Bertahan</button>
+    <div id="log"></div>
+  </div>
+
+  <script>
+    const firebaseConfig = {
+    apiKey: "AIzaSyAv-wsEfxBSqc4N0JBGC5wDi-AuSHpcGR0",
+  authDomain: "rpg-game-96fbf.firebaseapp.com",
+  databaseURL: "https://rpg-game-96fbf-default-rtdb.firebaseio.com",
+  projectId: "rpg-game-96fbf",
+  storageBucket: "rpg-game-96fbf.firebasestorage.app",
+  messagingSenderId: "639280312678",
+  appId: "1:639280312678:web:735f7c280b34422651d8a7",
+  measurementId: "G-BQWQFCHRR4"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    let playerName = "";
+    let playerRef = null;
+
+    function join() {
+      playerName = document.getElementById("name").value || "Anonim";
+      playerRef = db.ref("players/" + playerName);
+      playerRef.set({ hp: 100, action: "", timestamp: Date.now() });
+      playerRef.onDisconnect().remove();
+      document.getElementById("game").style.display = "block";
+      listen();
+    }
+
+    function act(action) {
+      if (!playerRef) return;
+      playerRef.update({ action, timestamp: Date.now() });
+    }
+
+    function listen() {
+      db.ref("players").on("value", snapshot => {
+        const data = snapshot.val() || {};
+        const status = Object.entries(data).map(([name, info]) => {
+          return `<b>${name}</b>: ${info.hp} HP (${info.action || "-"})`;
+        }).join("<br>");
+        document.getElementById("status").innerHTML = status;
+      });
+
+      db.ref("players").on("child_changed", snapshot => {
+        const { action } = snapshot.val();
+        const name = snapshot.key;
+        if (name !== playerName && action === "serang") {
+          db.ref("players/" + playerName).once("value").then(snap => {
+            let hp = snap.val().hp;
+            hp -= 15;
+            if (hp < 0) hp = 0;
+            playerRef.update({ hp });
+            log(`${name} menyerangmu! HP tersisa: ${hp}`);
+          });
+        } else if (name !== playerName && action === "bertahan") {
+          log(`${name} bertahan.`);
+        }
+      });
+    }
+
+    function log(msg) {
+      const logBox = document.getElementById("log");
+      logBox.innerHTML += `<div>➤ ${msg}</div>`;
+      logBox.scrollTop = logBox.scrollHeight;
+    }
+  </script>
+</body>
+</html>
