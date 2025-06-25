@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Mode 2v2 Medieval</title>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-app.js";
+    import { getDatabase, ref, onValue, get, update, set, push, remove, onDisconnect } from "https://www.gstatic.com/firebasejs/9.22.1/firebase-database.js";
+
+    const firebaseConfig = {
+  apiKey: "AIzaSyCTRG4Vrk4KZ87oRjY2HU3WaG-1L6rNxig",
+  authDomain: "rpg-multyplayer-2v2.firebaseapp.com",
+  databaseURL: "https://rpg-multyplayer-2v2-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "rpg-multyplayer-2v2",
+  storageBucket: "rpg-multyplayer-2v2.firebasestorage.app",
+  messagingSenderId: "813432654448",
+  appId: "1:813432654448:web:d74442af94103b5c4942b5",
+  measurementId: "G-5P2QL63G7T"
+};
+
+    const app = initializeApp(firebaseConfig);
+    const db = getDatabase(app);
+    const pemainRef = ref(db, 'pemain');
+
+    const avatarURL = "https://api.dicebear.com/7.x/adventurer/svg?seed=" + Math.floor(Math.random() * 1000);
+    const namaPemain = "Pemain" + Math.floor(Math.random() * 1000);
+
+    let timKamu = "";
+    let giliran = true;
+    let bertahan = false;
+    let pemainUID = null;
+
+    get(pemainRef).then(snapshot => {
+      const data = snapshot.val() || {};
+
+      // 🔥 Bersihkan pemain yang sudah mati (hp <= 0 atau kosong)
+      const semua = Object.entries(data);
+      semua.forEach(([id, p]) => {
+        if (!p.name || p.hp <= 0) {
+          remove(ref(db, `pemain/${id}`));
+        }
+      });
+
+      // Hitung ulang setelah dibersihkan
+      const aktif = Object.values(data).filter(p => p.hp > 0).length;
+      if (aktif >= 4) {
+        alert("Game penuh! Maksimal 4 pemain aktif.");
+        return;
+      }
+
+      timKamu = (aktif % 2 === 0) ? "Merah" : "Biru";
+
+      const pemainBaru = {
+        name: namaPemain,
+        team: timKamu,
+        hp: 100,
+        avatar: avatarURL
+      };
+
+      const newRef = push(pemainRef);
+      pemainUID = newRef.key;
+      set(newRef, pemainBaru);
+      onDisconnect(newRef).remove();
+
+      document.getElementById("info").innerText = `⚔️ ${namaPemain} bergabung di Tim ${timKamu}`;
+      document.getElementById("avatar").src = avatarURL;
+    });
+
+    function cekSiap(dataPemain) {
+      const merah = dataPemain.filter(p => p.team === "Merah" && p.hp > 0).length;
+      const biru = dataPemain.filter(p => p.team === "Biru" && p.hp > 0).length;
+
+      const tombolSerang = document.querySelector('button[onclick="serang()"]');
+      const tombolBertahan = document.querySelector('button[onclick="bertahan()"]');
+
+      if (merah === 2 && biru === 2) {
+        tombolSerang.disabled = false;
+        tombolBertahan.disabled = false;
+        document.getElementById("giliranStatus").innerText = "✅ Giliranmu!";
+      } else {
+        tombolSerang.disabled = true;
+        tombolBertahan.disabled = true;
+        document.getElementById("giliranStatus").innerText = "❌ Menunggu 4 pemain (2v2)...";
+      }
+    }
+
+    window.serang = function () {
+      if (!giliran) {
+        alert("⛔ Bukan giliranmu!");
+        return;
+      }
+
+      const targetId = document.getElementById("targetSelect").value;
+      const targetRef = ref(db, `pemain/${targetId}`);
+
+      get(targetRef).then(snapshot => {
+        if (snapshot.exists()) {
+          const data = snapshot.val();
+          const damage = bertahan ? 15 : 30;
+          let hpBaru = data.hp - damage;
+          if (hpBaru < 0) hpBaru = 0;
+          update(targetRef, { hp: hpBaru }).then(() => {
+            document.getElementById("attackAnim").style.display = "block";
+            setTimeout(() => {
+              document.getElementById("attackAnim").style.display = "none";
+            }, 1500);
+            giliran = false;
+            bertahan = false;
+            document.getElementById("giliranStatus").innerText = "⏳ Menunggu giliran...";
+            setTimeout(() => {
+              giliran = true;
+              document.getElementById("giliranStatus").innerText = "✅ Giliranmu!";
+            }, 4000);
+          });
+        }
+      });
+    };
+
+    window.bertahan = function () {
+      if (!giliran) {
+        alert("⛔ Bukan giliranmu!");
+        return;
+      }
+      bertahan = true;
+      giliran = false;
+      document.getElementById("giliranStatus").innerText = "🛡️ Kamu bertahan!";
+      setTimeout(() => {
+        giliran = true;
+        document.getElementById("giliranStatus").innerText = "✅ Giliranmu!";
+      }, 4000);
+    };
+
+    function cekKemenangan(timKamu, dataPemain) {
+      const musuhHidup = dataPemain.filter(p => p.team !== timKamu && p.hp > 0).length;
+      const timHidup = dataPemain.filter(p => p.team === timKamu && p.hp > 0).length;
+      if (musuhHidup === 0 && timHidup > 0) {
+        document.getElementById("winScreen").style.display = "block";
+      }
+    }
+
+    onValue(pemainRef, (snapshot) => {
+      const data = snapshot.val();
+      if (!data) return;
+      const semua = Object.entries(data);
+      const container = document.getElementById("targetSelect");
+      container.innerHTML = "";
+
+      semua.forEach(([uid, p]) => {
+        if (p.hp > 0 && p.name !== namaPemain) {
+          const opt = document.createElement("option");
+          opt.value = uid;
+          opt.textContent = `${p.name} (${p.team}) [HP: ${p.hp}]`;
+          container.appendChild(opt);
+        }
+      });
+
+      const pemainIni = semua.find(([_, p]) => p.name === namaPemain);
+      if (pemainIni) {
+        cekKemenangan(pemainIni[1].team, semua.map(([_, p]) => p));
+      }
+
+      cekSiap(semua.map(([_, p]) => p));
+    });
+  </script>
+  <style>
+    @import url('https://fonts.googleapis.com/css2?family=MedievalSharp&display=swap');
+    body {
+      background: linear-gradient(to bottom, #5e412f, #fceabb);
+      color: #fff;
+      text-align: center;
+      font-family: 'MedievalSharp', cursive;
+      padding: 20px;
+    }
+    #avatar {
+      width: 120px;
+      margin: 10px auto;
+      border-radius: 10px;
+      border: 4px solid gold;
+      background-color: #fff3;
+      padding: 5px;
+    }
+    select, button {
+      padding: 10px;
+      font-size: 16px;
+      margin: 10px;
+      border-radius: 10px;
+      border: none;
+      background-color: #7b3f00;
+      color: white;
+      font-weight: bold;
+      box-shadow: 0 0 10px #0008;
+    }
+    #winScreen {
+      display: none;
+      margin-top: 20px;
+    }
+    #winScreen img {
+      width: 150px;
+      margin: 10px;
+    }
+    #attackAnim img {
+      width: 100px;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h1>🏰 Mode 2v2 - Arena Medieval</h1>
+  <p id="info">Memuat pemain...</p>
+  <img id="avatar" src="" alt="Avatar">
+
+  <h2>🗡️ Pilih Target</h2>
+  <select id="targetSelect"></select><br>
+  <button onclick="serang()" disabled>🔪 Serang</button>
+  <button onclick="bertahan()" disabled>🛡️ Bertahan</button>
+  <p id="giliranStatus">⏳ Menunggu pemain lain...</p>
+
+  <div id="attackAnim" style="display:none;">
+    <img src="https://media.tenor.com/yheo1GGu3FwAAAAC/attack-on-titan-eren.gif" alt="Serangan!">
+  </div>
+
+  <div id="winScreen">
+    <h2>🏆 Tim Kamu Menang!</h2>
+    <img src="https://cdn-icons-png.flaticon.com/512/3135/3135715.png" alt="Piala" />
+    <img src="https://cdn-icons-png.flaticon.com/512/528/528101.png" alt="Pedang" />
+  </div>
+</body>
+</html>

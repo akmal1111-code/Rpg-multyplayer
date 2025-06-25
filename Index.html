@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>⚔️ RPG Multiplayer Medieval</title>
+  <link href="https://fonts.googleapis.com/css2?family=MedievalSharp&display=swap" rel="stylesheet">
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.22.1/firebase-database-compat.js"></script>
+  <style>
+    body {
+      background: #2c1d0f;
+      color: #f0e6d2;
+      font-family: 'MedievalSharp', cursive;
+      text-align: center;
+      padding: 20px;
+    }
+    input, button, select {
+      padding: 10px;
+      margin: 5px;
+      font-size: 16px;
+      border-radius: 5px;
+      font-family: inherit;
+    }
+    button { background-color: #8b5e3c; color: white; border: none; }
+    #log, #status, #chat, #leaderboard {
+      background-color: rgba(0,0,0,0.3);
+      border: 1px solid #666;
+      padding: 10px;
+      margin: 10px auto;
+      width: 90%;
+      max-width: 600px;
+      border-radius: 8px;
+    }
+    #game { display: none; }
+
+    #guide {
+      background: linear-gradient(#fdf3c2, #f6e6b4);
+      border: 3px solid #b39759;
+      box-shadow: inset 0 0 20px #a7823a, 0 0 20px rgba(0,0,0,0.5);
+      padding: 25px 20px;
+      margin: 10px auto;
+      border-radius: 10px;
+      max-width: 600px;
+      font-family: 'MedievalSharp', cursive;
+      color: black;
+      font-size: 18px;
+      position: relative;
+    }
+    #guide::before, #guide::after {
+      content: '';
+      position: absolute;
+      width: 20px;
+      height: 20px;
+      background: #b39759;
+      border-radius: 50%;
+      box-shadow: inset -2px -2px 4px rgba(0,0,0,0.2);
+    }
+    #guide::before { top: -10px; left: -10px; }
+    #guide::after { bottom: -10px; right: -10px; }
+
+    #timer {
+      margin-top: 10px;
+      font-size: 20px;
+      color: #ffd700;
+    }
+  </style>
+</head>
+<body>
+  <h2>⚔️ Turn-Based RPG - Firebase</h2>
+  <div id="setup">
+    <div id="guide">
+      <h3 style="font-size: 26px; text-shadow: 1px 1px 1px #fff;">📜 Panduan Bermain</h3>
+      <p>
+        • Setiap pemain memiliki <b>100 HP</b>.<br>
+        • Giliran: hanya bisa <b>Serang</b> atau <b>Bertahan</b>.<br>
+        • <b>Bertahan</b> mengurangi setengah damage.<br>
+        • Pemain terakhir yang hidup adalah <b>pemenangnya</b>!<br>
+        • Pemenang mendapatkan <b>+20 koin</b>.<br>
+        • Kumpulkan koin untuk membeli <b>Role</b> yang lebih kuat!<br>
+        • disini ada 2 mode yaitu <b>solo, 2v2</b>
+      </p>
+    </div>
+    <input id="name" placeholder="Nama Prajurit">
+    <select id="role">
+      <option value="None">None (Gratis)</option>
+      <option value="Warrior">Warrior (+5 dmg) - 100 koin</option>
+      <option value="Mage">Mage (+10 dmg) - 100 koin</option>
+      <option value="Rogue">Rogue (+7 dmg) - 100 koin</option>
+    </select><br>
+    <button onclick="join()">⚔️ Solo Mode</button>
+    <button onclick="window.location.href='2v2.html'" style="padding: 15px 30px; font-size: 20px;">⚔️Mode 2v2</button>
+  </div>
+
+  <div id="game">
+    <div id="status"></div>
+    <div><b>Koin:</b> <span id="coins">0</span> | <b>Class:</b> <span id="playerRole">-</span></div>
+    <select id="target"></select><br>
+    <button onclick="act('serang')" id="attackBtn">⚔️ Serang</button>
+    <button onclick="act('bertahan')" id="defendBtn">🛡️ Bertahan</button>
+    <div id="timer">⏳ Sisa Waktu: <span id="timeLeft">-</span> detik</div>
+
+    <div id="chat">
+      <h3>💬 Chat</h3>
+      <div id="chatLog" style="max-height:150px; overflow-y:auto;"></div>
+      <input id="chatMsg" placeholder="Ketik pesan...">
+      <button onclick="sendChat()">Kirim</button>
+      <small style="font-size:14px; color:#ccc;">Gunakan /pm NamaTarget isi pesan untuk mengirim pesan rahasia.</small>
+    </div>
+
+    <div id="log"></div>
+    <div id="leaderboard">
+      <h3>🏆 Leaderboard</h3>
+      <div id="leaderList"></div>
+    </div>
+  </div>
+
+  <script>
+    const firebaseConfig = {
+      apiKey: "AIzaSyAv-wsEfxBSqc4N0JBGC5wDi-AuSHpcGR0",
+      authDomain: "rpg-game-96fbf.firebaseapp.com",
+      databaseURL: "https://rpg-game-96fbf-default-rtdb.firebaseio.com",
+      projectId: "rpg-game-96fbf",
+      storageBucket: "rpg-game-96fbf.appspot.com",
+      messagingSenderId: "639280312678",
+      appId: "1:639280312678:web:735f7c280b34422651d8a7"
+    };
+    firebase.initializeApp(firebaseConfig);
+    const db = firebase.database();
+
+    let playerName = "";
+    let playerRef = null;
+    let myData = {};
+    let actedThisTurn = false;
+    let timerInterval;
+    let timeLeft = 30;
+
+    function join() {
+      const role = document.getElementById("role").value;
+      playerName = document.getElementById("name").value || "Anonim";
+      if (!playerName) return alert("Masukkan nama!");
+
+      db.ref("leaderboard/" + playerName).once("value", snap => {
+        const userData = snap.val() || { coins: 0, wins: 0 };
+        let cost = (role !== "None") ? 100 : 0;
+        if (userData.coins < cost) {
+          alert("Koin tidak cukup untuk memilih class ini!");
+          return;
+        }
+
+        if (cost > 0) {
+          db.ref("leaderboard/" + playerName).set({
+            coins: userData.coins - cost,
+            wins: userData.wins
+          });
+        }
+
+        playerRef = db.ref("players/" + playerName);
+        playerRef.set({ hp: 100, action: "", target: "", defending: false, acted: false, role });
+        playerRef.onDisconnect().remove();
+
+        document.getElementById("setup").style.display = "none";
+        document.getElementById("game").style.display = "block";
+        document.getElementById("playerRole").textContent = role;
+
+        listen();
+      });
+    }
+
+    function act(action) {
+      if (actedThisTurn || myData.hp <= 0) return;
+      const target = document.getElementById("target").value;
+      if (action === 'serang' && target === playerName) return alert("Tidak bisa menyerang diri sendiri!");
+      playerRef.update({ action, target, acted: true });
+      actedThisTurn = true;
+      toggleButtons(false);
+      clearInterval(timerInterval);
+      document.getElementById("timeLeft").textContent = "-";
+    }
+
+    function toggleButtons(state) {
+      document.getElementById("attackBtn").disabled = !state;
+      document.getElementById("defendBtn").disabled = !state;
+      document.getElementById("target").disabled = !state;
+    }
+
+    function listen() {
+      db.ref("players").on("value", snapshot => {
+        const data = snapshot.val() || {};
+        myData = data[playerName] || {};
+
+        db.ref("leaderboard/" + playerName).once("value", snap => {
+          document.getElementById("coins").textContent = snap.val()?.coins || 0;
+        });
+
+        const alive = Object.entries(data).filter(([_, p]) => p.hp > 0);
+        const targetSelect = document.getElementById("target");
+        targetSelect.innerHTML = "";
+        alive.forEach(([name]) => {
+          const opt = document.createElement("option");
+          opt.value = name;
+          opt.textContent = name;
+          targetSelect.appendChild(opt);
+        });
+
+        document.getElementById("status").innerHTML = Object.entries(data).map(([name, p]) => `${name}: ${p.hp} HP`).join("<br>");
+
+        if (myData.hp <= 0) {
+          toggleButtons(false);
+          log("💀 Kamu mati. Spectator mode aktif.");
+        }
+
+        const allActed = alive.every(([_, p]) => p.acted);
+        if (allActed) processTurn(data);
+      });
+
+      db.ref("chat").on("child_added", snap => {
+        const msg = snap.val();
+        const el = document.createElement("div");
+        if (msg.private) {
+          if (msg.to === playerName || msg.name === playerName) {
+            el.style.color = "#ffa";
+            el.textContent = `💌 (PM) ${msg.name} ➤ ${msg.to}: ${msg.text}`;
+            document.getElementById("chatLog").appendChild(el);
+          }
+        } else {
+          el.textContent = `${msg.name}: ${msg.text}`;
+          document.getElementById("chatLog").appendChild(el);
+        }
+      });
+
+      db.ref("leaderboard").on("value", snap => {
+        const lb = snap.val() || {};
+        const list = Object.entries(lb).map(([name, v]) => `${name} - ${v.wins} win(s), ${v.coins} coins`);
+        document.getElementById("leaderList").innerHTML = list.join("<br>");
+      });
+    }
+
+    function processTurn(players) {
+      const updates = {};
+      for (const [name, p] of Object.entries(players)) {
+        if (p.hp <= 0) continue;
+        if (p.action === 'serang' && players[p.target] && players[p.target].hp > 0) {
+          let base = 20;
+          const bonus = p.role === 'Warrior' ? 5 : p.role === 'Mage' ? 10 : p.role === 'Rogue' ? 7 : 0;
+          let dmg = base + bonus;
+          if (players[p.target].defending) dmg = Math.floor(dmg / 2);
+          updates[`players/${p.target}/hp`] = Math.max(players[p.target].hp - dmg, 0);
+          log(`${name} menyerang ${p.target} (${dmg} dmg)`);
+        }
+        if (p.action === 'bertahan') updates[`players/${name}/defending`] = true;
+        updates[`players/${name}/acted`] = false;
+        updates[`players/${name}/action`] = "";
+        updates[`players/${name}/target`] = "";
+      }
+
+      for (const [name, p] of Object.entries(players)) {
+        if (!updates[`players/${name}/defending`]) updates[`players/${name}/defending`] = false;
+      }
+
+      db.ref().update(updates).then(() => {
+        const alive = Object.entries(players).filter(([_, p]) => p.hp > 0);
+        if (alive.length === 1) {
+          const winner = alive[0][0];
+          db.ref(`leaderboard/${winner}`).transaction(data => {
+            if (!data) return { coins: 20, wins: 1 };
+            return { coins: (data.coins || 0) + 20, wins: (data.wins || 0) + 1 };
+          });
+          log(`🏆 ${winner} menang!`);
+        }
+        if (myData.hp > 0) {
+          actedThisTurn = false;
+          toggleButtons(true);
+          startTimer();
+        }
+      });
+    }
+
+    function startTimer() {
+      clearInterval(timerInterval);
+      timeLeft = 30;
+      document.getElementById("timeLeft").textContent = timeLeft;
+
+      timerInterval = setInterval(() => {
+        timeLeft--;
+        document.getElementById("timeLeft").textContent = timeLeft;
+        if (timeLeft <= 0) {
+          clearInterval(timerInterval);
+          if (!actedThisTurn && myData.hp > 0) {
+            act("bertahan");
+            log("⌛ Waktu habis. Kamu otomatis bertahan.");
+          }
+        }
+      }, 1000);
+    }
+
+    function log(msg) {
+      const el = document.createElement("div");
+      el.textContent = `> ${msg}`;
+      document.getElementById("log").appendChild(el);
+    }
+
+    function sendChat() {
+      const msg = document.getElementById("chatMsg").value.trim();
+      if (!msg) return;
+
+      if (msg.startsWith("/pm ")) {
+        const parts = msg.slice(4).split(" ");
+        const target = parts.shift();
+        const text = parts.join(" ");
+        if (!target || !text) return alert("Format: /pm NamaTarget isi pesan");
+
+        db.ref("chat").push({
+          name: playerName,
+          text: text,
+          to: target,
+          private: true
+        });
+      } else {
+        db.ref("chat").push({
+          name: playerName,
+          text: msg,
+          private: false
+        });
+      }
+
+      document.getElementById("chatMsg").value = "";
+    }
+  </script>
+</body>
+</html>
